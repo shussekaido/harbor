@@ -324,6 +324,40 @@ export async function fetchJobSummary(
   return response.json();
 }
 
+export interface JobNotesResponse {
+  notes: string | null;
+}
+
+export async function fetchJobNotes(
+  jobName: string
+): Promise<JobNotesResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/jobs/${encodeURIComponent(jobName)}/notes`
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch job notes: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function saveJobNotes(
+  jobName: string,
+  notes: string
+): Promise<JobNotesResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/jobs/${encodeURIComponent(jobName)}/notes`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to save job notes: ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function summarizeJob(
   jobName: string,
   model: string = "haiku",

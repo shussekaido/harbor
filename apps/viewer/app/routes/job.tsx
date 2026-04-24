@@ -69,13 +69,16 @@ import {
 import { LoadingDots } from "~/components/ui/loading-dots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Kbd } from "~/components/ui/kbd";
+import { Textarea } from "~/components/ui/textarea";
 import {
   deleteJob,
   fetchJob,
+  fetchJobNotes,
   fetchJobSummary,
   fetchTaskFilters,
   fetchTasks,
   fetchUploadStatus,
+  saveJobNotes,
   summarizeJob,
   uploadJob,
 } from "~/lib/api";
@@ -360,6 +363,7 @@ const columns: ColumnDef<TaskSummary>[] = [
 ];
 
 const PAGE_SIZE = 100;
+type JobTab = "results" | "summary" | "notes";
 
 export default function Job() {
   const { jobName } = useParams();
@@ -546,12 +550,14 @@ export default function Job() {
   const totalPages = tasksData?.total_pages ?? 0;
   const total = tasksData?.total ?? 0;
 
-  const [activeTab, setActiveTab] = useState("results");
+  const [activeTab, setActiveTab] = useState<JobTab>("results");
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
 
   // Handle Escape to navigate back when not on Results tab
   // (Results tab handles Escape via useKeyboardTableNavigation)
   useHotkeys("escape", () => navigate("/"), {
-    enabled: activeTab !== "results",
+    enabled: activeTab !== "results" && !isEditingNotes,
   });
 
   const { highlightedIndex } = useKeyboardTableNavigation({
@@ -566,6 +572,18 @@ export default function Job() {
     queryFn: () => fetchJobSummary(jobName!),
     enabled: !!jobName,
   });
+
+  const { data: notesData, isLoading: notesLoading } = useQuery({
+    queryKey: ["job-notes", jobName],
+    queryFn: () => fetchJobNotes(jobName!),
+    enabled: !!jobName,
+  });
+
+  useEffect(() => {
+    if (!isEditingNotes) {
+      setNotesDraft(notesData?.notes ?? "");
+    }
+  }, [isEditingNotes, notesData?.notes]);
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteJob(jobName!),
@@ -617,6 +635,36 @@ export default function Job() {
       toast.error("Failed to upload job", { description: error.message });
     },
   });
+
+  const notesMutation = useMutation({
+    mutationFn: (notes: string) => saveJobNotes(jobName!, notes),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["job-notes", jobName] });
+      setNotesDraft(data.notes ?? "");
+      setIsEditingNotes(false);
+      toast.success(data.notes ? "Note saved" : "Note cleared");
+    },
+    onError: (error) => {
+      toast.error("Failed to save note", { description: error.message });
+    },
+  });
+
+  const savedNotes = notesData?.notes ?? null;
+  const hasSavedNotes = !!savedNotes;
+
+  const handleStartEditingNotes = () => {
+    setNotesDraft(savedNotes ?? "");
+    setIsEditingNotes(true);
+  };
+
+  const handleCancelNotesEdit = () => {
+    setNotesDraft(savedNotes ?? "");
+    setIsEditingNotes(false);
+  };
+
+  const handleSaveNotes = () => {
+    notesMutation.mutate(notesDraft);
+  };
 
   if (!jobLoading && !job) {
     return (
@@ -788,27 +836,34 @@ export default function Job() {
           </div>
         )}
       </div>
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as JobTab)}
+        className="mt-6"
+      >
         <div className="flex items-center justify-between bg-card border border-b-0">
           <TabsList className="border-0">
             <TabsTrigger value="results">Results</TabsTrigger>
             <TabsTrigger value="summary">Analysis</TabsTrigger>
+            <TabsTrigger value="notes">Notes</TabsTrigger>
           </TabsList>
-          <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Kbd>j</Kbd>
-              <Kbd>k</Kbd>
-              <span>to navigate</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <Kbd>Enter</Kbd>
-              <span>to open</span>
-            </span>
-            <span className="flex items-center gap-1">
-              <Kbd>Esc</Kbd>
-              <span>to deselect</span>
-            </span>
-          </div>
+          {activeTab === "results" && (
+            <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Kbd>j</Kbd>
+                <Kbd>k</Kbd>
+                <span>to navigate</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <Kbd>Enter</Kbd>
+                <span>to open</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <Kbd>Esc</Kbd>
+                <span>to deselect</span>
+              </span>
+            </div>
+          )}
         </div>
         <TabsContent value="results">
           <div className="grid grid-cols-7 -mb-px">
@@ -1013,6 +1068,61 @@ export default function Job() {
               <AnalyzeDialog jobName={jobName!} />
             </Empty>
           )}
+        </TabsContent>
+        <TabsContent value="notes">
+          <div className="border bg-card p-6">
+            {notesLoading ? (
+              <LoadingDots text="Loading notes" />
+            ) : isEditingNotes ? (
+              <div className="space-y-4">
+                <Textarea
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  placeholder="Write notes in Markdown..."
+                  className="min-h-80 resize-y"
+                  disabled={notesMutation.isPending}
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleSaveNotes}
+                    disabled={notesMutation.isPending}
+                  >
+                    {notesMutation.isPending ? <LoadingDots text="Saving" /> : "Save"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={handleCancelNotesEdit}
+                    disabled={notesMutation.isPending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : hasSavedNotes ? (
+              <div className="space-y-4">
+                <div className="flex justify-end">
+                  <Button variant="secondary" onClick={handleStartEditingNotes}>
+                    Edit
+                  </Button>
+                </div>
+                <Markdown>{savedNotes}</Markdown>
+              </div>
+            ) : (
+              <Empty className="border-0 bg-transparent p-0">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <FileText />
+                  </EmptyMedia>
+                  <EmptyTitle>No notes yet</EmptyTitle>
+                  <EmptyDescription>
+                    Add local Markdown notes for this job. These stay in the job
+                    directory and are not uploaded.
+                  </EmptyDescription>
+                </EmptyHeader>
+                <Button onClick={handleStartEditingNotes}>Add note</Button>
+              </Empty>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

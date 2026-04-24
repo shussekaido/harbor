@@ -54,6 +54,18 @@ class TrialSummarizeRequest(BaseModel):
     model: str = "haiku"
 
 
+class UpdateJobNotesRequest(BaseModel):
+    """Request body for updating local job notes."""
+
+    notes: str
+
+
+class JobNotesResponse(BaseModel):
+    """Response body for local job notes."""
+
+    notes: str | None
+
+
 class TaskGroupStats(TypedDict):
     """Stats accumulated for a task group."""
 
@@ -711,6 +723,54 @@ def _register_job_endpoints(app: FastAPI, jobs_dir: Path) -> None:
             except Exception:
                 return {"summary": "[Error reading file]"}
         return {"summary": None}
+
+    @app.get("/api/jobs/{job_name}/notes", response_model=JobNotesResponse)
+    def get_job_notes(job_name: str) -> JobNotesResponse:
+        """Get local notes (notes.md file at job root) for a job."""
+        job_dir = _validate_job_path(job_name)
+        if not job_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+        notes_path = job_dir / "notes.md"
+        if not notes_path.exists():
+            return JobNotesResponse(notes=None)
+
+        try:
+            return JobNotesResponse(notes=notes_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to read notes: {str(e)}"
+            )
+
+    @app.put("/api/jobs/{job_name}/notes", response_model=JobNotesResponse)
+    def update_job_notes(
+        job_name: str, request: UpdateJobNotesRequest
+    ) -> JobNotesResponse:
+        """Update local notes (notes.md file at job root) for a job."""
+        job_dir = _validate_job_path(job_name)
+        if not job_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Job '{job_name}' not found")
+
+        notes_path = job_dir / "notes.md"
+        stripped_notes = request.notes.strip()
+
+        if not stripped_notes:
+            try:
+                if notes_path.exists():
+                    notes_path.unlink()
+                return JobNotesResponse(notes=None)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to delete notes: {str(e)}"
+                )
+
+        try:
+            notes_path.write_text(request.notes, encoding="utf-8")
+            return JobNotesResponse(notes=request.notes)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to save notes: {str(e)}"
+            )
 
     @app.get("/api/jobs/{job_name}/analysis")
     def get_job_analysis(job_name: str) -> dict[str, Any]:
